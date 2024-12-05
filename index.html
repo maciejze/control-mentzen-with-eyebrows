@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Eyebrow Volume Control</title>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils"></script>
+    <style>
+        canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            z-index: 1;
+            display:none;
+        }
+        #cam {
+            position: absolute;
+            top: 0;
+            left: 0;
+            z-index: 0;
+            visibility: hidden;
+            display:none;
+        }
+        #videoPlayer {
+
+            display: none;
+        }
+
+    </style>
+</head>
+<body>
+<video id="cam" autoplay></video>
+<video id="videoPlayer" controls width="600">
+    <source src="./memtzen.mp4" type="video/mp4">
+    Your browser does not support the audio element.
+</video>
+<canvas id="outputCanvas"></canvas>
+<progress id="progress" value="50" max="100"></progress>
+<script>
+    const videoElement = document.getElementById('cam');
+    const canvasElement = document.getElementById('outputCanvas');
+    const canvasCtx = canvasElement.getContext('2d');
+    const videoPlayer = document.getElementById('videoPlayer');
+    const progressBar = document.getElementById('progress');
+    // Initialize variables
+    let baselineEyebrowHeight = null;
+    let currentVolume = 20; // Starting volume
+    let volumeUpdateInterval = null;
+    videoPlayer.volume = 0.2;
+
+    // Create FaceMesh
+    const faceMesh = new FaceMesh({
+        locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`,
+    });
+    faceMesh.setOptions({
+        maxNumFaces: 1,
+        refineLandmarks: true,
+        minDetectionConfidence: 0.5,
+        minTrackingConfidence: 0.5,
+    });
+
+    // Attach the camera to the video element
+    const camera = new Camera(videoElement, {
+        onFrame: async () => {
+            await faceMesh.send({ image: videoElement });
+        },
+        width: 640,
+        height: 480,
+    });
+    camera.start();
+
+    faceMesh.onResults((results) => {
+        canvasElement.width = videoElement.videoWidth;
+        canvasElement.height = videoElement.videoHeight;
+
+        // Draw the face mesh annotations on the canvas
+        canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+        canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
+
+        if (results.multiFaceLandmarks) {
+            for (const landmarks of results.multiFaceLandmarks) {
+                // Extract eyebrow landmarks
+                const leftEyebrow = landmarks[55]; // Approx. left eyebrow (top)
+                const rightEyebrow = landmarks[285]; // Approx. right eyebrow (top)
+                const nose = landmarks[1]; // Nose tip for baseline reference
+
+                // Compute the average height of eyebrows relative to the nose
+                const eyebrowHeight = (leftEyebrow.y + rightEyebrow.y) / 2;
+                const noseHeight = nose.y;
+                const relativeEyebrowHeight = noseHeight - eyebrowHeight;
+
+                // Set baseline eyebrow height when the app starts
+                if (baselineEyebrowHeight === null) {
+                    baselineEyebrowHeight = relativeEyebrowHeight;
+                    console.log(`Baseline set: ${baselineEyebrowHeight}`);
+                    videoPlayer.setAttribute('style', 'display: block');
+                    videoPlayer.play()
+                    continue;// Skip processing during initialization
+                }
+
+                // Determine if eyebrows are raised or lowered
+                const eyebrowRaised = relativeEyebrowHeight < baselineEyebrowHeight - 0.01; // Raised threshold
+                const eyebrowLowered = relativeEyebrowHeight > baselineEyebrowHeight + 0.01; // Lowered threshold
+
+                if (eyebrowLowered) {
+                    startVolumeChange("raise");
+                    console.log("Happy at Memtzen");
+                } else if (eyebrowRaised) {
+                    startVolumeChange("lower");
+                    console.log("Angry at Memtzen");
+                } else {
+                    stopVolumeChange();
+                }
+
+            }
+        }
+    });
+
+    function startVolumeChange(action) {
+        if (volumeUpdateInterval) return; // Prevent multiple intervals
+
+        volumeUpdateInterval = setInterval(() => {
+            if (action === "raise") {
+                currentVolume = Math.min(100, currentVolume + 5); // Raise volume
+            } else if (action === "lower") {
+                currentVolume = Math.max(0, currentVolume - 5); // Lower volume
+            }
+            videoPlayer.volume = currentVolume / 100
+            console.log(`Volume: ${currentVolume}`);
+            progressBar.value = currentVolume;
+        }, 200);
+    }
+
+    // Stop volume adjustment
+    function stopVolumeChange() {
+        if (volumeUpdateInterval) {
+            clearInterval(volumeUpdateInterval);
+            volumeUpdateInterval = null;
+        }
+    }
+</script>
+</body>
+</html>
